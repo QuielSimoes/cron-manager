@@ -1,0 +1,44 @@
+[Mon Feb  2 16:45:01 -03 2026] Executando chamada para https://httpbin.org/post
+{
+  "args": {}, 
+  "data": "{\"teste\": \"dados do agendamento\", \"timestamp\": \"2026-02-02\"}", 
+  "files": {}, 
+  "form": {}, 
+  "headers": {
+    "Accept": "*/*", 
+    "Content-Length": "60", 
+    "Content-Type": "application/json", 
+    "Host": "httpbin.org", 
+    "User-Agent": "curl/8.14.1", 
+    "X-Amzn-Trace-Id": "Root=1-6980febd-190b7fa129f75042167a26ee"
+  }, 
+  "json": {
+    "teste": "dados do agendamento", 
+    "timestamp": "2026-02-02"
+  }, 
+  "origin": "179.105.129.22", 
+  "url": "https://httpbin.org/post"
+}
+[Mon Feb  2 16:45:01 -03 2026] Chamada concluída
+[Mon Feb  2 16:50:01 -03 2026] Executando chamada para https://httpbin.org/post
+{
+  "args": {}, 
+  "data": "{\"teste\": \"dados do agendamento\", \"timestamp\": \"2026-02-02\"}", 
+  "files": {}, 
+  "form": {}, 
+  "headers": {
+    "Accept": "*/*", 
+    "Content-Length": "60", 
+    "Content-Type": "application/json", 
+    "Host": "httpbin.org", 
+    "User-Agent": "curl/8.14.1", 
+    "X-Amzn-Trace-Id": "Root=1-6980ffea-761792dc4ad3c51e0b9099e3"
+  }, 
+  "json": {
+    "teste": "dados do agendamento", 
+    "timestamp": "2026-02-02"
+  }, 
+  "origin": "186.229.169.27", 
+  "url": "https://httpbin.org/post"
+}
+[Mon Feb  2 16:50:02 -03 2026] Chamada concluída

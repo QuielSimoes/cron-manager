@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import logging
+import urllib.parse
 from datetime import datetime
 from typing import List, Dict, Optional
 
@@ -20,6 +21,108 @@ class CronManager:
         self.jobs = self._load_jobs()
         self._ensure_cron_running()
         self._sync_to_crontab()
+    
+    def _generate_url_slug(self, url: str) -> str:
+        """Gera slug da URL para nome do arquivo de log"""
+        # Remove protocolo e converte para minúsculo
+        clean_url = re.sub(r'^https?://', '', url.lower())
+        # Remove caracteres especiais e substitui por -
+        slug = re.sub(r'[^a-z0-9]+', '-', clean_url)
+        # Remove - do início e fim
+        slug = slug.strip('-')
+        return slug
+    
+    def _build_cron_expression(self, dados_cron: Dict) -> str:
+        """Monta expressão cron baseada nos parâmetros"""
+        periodicidade = dados_cron.get('periodicidade')
+        dias = dados_cron.get('dias', [])
+        horario = dados_cron.get('horario', '00:00')
+        recorrencia = dados_cron.get('recorrencia', '1h')
+        
+        # Parse do horário
+        try:
+            hora, minuto = map(int, horario.split(':'))
+        except:
+            hora, minuto = 0, 0
+        
+        # Parse da recorrência
+        recorrencia_num = 1
+        recorrencia_unit = 'h'
+        if recorrencia:
+            match = re.match(r'(\d+)(min|h)', recorrencia)
+            if match:
+                recorrencia_num = int(match.group(1))
+                recorrencia_unit = match.group(2)
+        
+        # Monta expressão baseada na periodicidade
+        if periodicidade == 1:  # Diário
+            if recorrencia_unit == 'min':
+                return f'*/{recorrencia_num} {hora}-23 * * *'
+            else:  # horas
+                if recorrencia_num == 1:
+                    return f'{minuto} {hora}-23 * * *'
+                else:
+                    # Gera lista de horas com recorrência
+                    horas_list = []
+                    for h in range(hora, 24, recorrencia_num):
+                        horas_list.append(str(h))
+                    horas_str = ','.join(horas_list)
+                    return f'{minuto} {horas_str} * * *'
+        
+        elif periodicidade == 2:  # Semanal
+            dias_semana = ','.join([str(d % 7) for d in dias if 1 <= d <= 7])
+            if not dias_semana:
+                dias_semana = '0'  # Domingo por padrão
+            
+            if recorrencia_unit == 'min':
+                return f'*/{recorrencia_num} {hora}-23 * * {dias_semana}'
+            else:
+                if recorrencia_num == 1:
+                    return f'{minuto} {hora}-23 * * {dias_semana}'
+                else:
+                    # Gera lista de horas com recorrência
+                    horas_list = []
+                    for h in range(hora, 24, recorrencia_num):
+                        horas_list.append(str(h))
+                    horas_str = ','.join(horas_list)
+                    return f'{minuto} {horas_str} * * {dias_semana}'
+        
+        elif periodicidade == 3:  # Mensal
+            dias_mes = ','.join([str(d) for d in dias if 1 <= d <= 28])
+            if not dias_mes:
+                dias_mes = '1'  # Dia 1 por padrão
+            
+            if recorrencia_unit == 'min':
+                return f'*/{recorrencia_num} {hora}-23 {dias_mes} * *'
+            else:
+                if recorrencia_num == 1:
+                    return f'{minuto} {hora}-23 {dias_mes} * *'
+                else:
+                    # Para recorrência em horas no mensal, usa apenas o horário inicial
+                    horas_list = []
+                    for h in range(hora, 24, recorrencia_num):
+                        horas_list.append(str(h))
+                    horas_str = ','.join(horas_list)
+                    return f'{minuto} {horas_str} {dias_mes} * *'
+        
+        # Fallback para execução diária às 00:00
+        return f'{minuto} {hora} * * *'
+    
+    def _build_curl_command(self, url: str, payload: str = None, slug: str = '') -> str:
+        """Monta comando curl para execução"""
+        log_file = f'/var/log/cron/{slug}.txt'
+        
+        if payload:
+            # POST com payload JSON
+            curl_cmd = f"curl -k -s -X POST '{url}' -H 'Content-Type: application/json' -d '{payload}'"
+        else:
+            # GET simples
+            curl_cmd = f"curl -k -s '{url}'"
+        
+        # Adiciona redirecionamento para log com timestamp
+        full_cmd = f'echo "[$(date)] Executando chamada para {url}" >> {log_file} && {curl_cmd} >> {log_file} 2>&1 && echo "[$(date)] Chamada concluída" >> {log_file}'
+        
+        return full_cmd
     
     def _ensure_cron_running(self):
         """Garante que o crond está rodando"""
@@ -80,8 +183,11 @@ class CronManager:
             crontab_content = ""
             for job in self.jobs:
                 # Adiciona comentário com o ID e nome do job
-                crontab_content += f"# ID: {job['id']} - {job['name']}\n"
-                crontab_content += f"{job['schedule']} {job['command']}\n"
+                job_id = job.get('idAgendamento', job.get('id'))
+                job_name = job.get('nomeAgendamento', job.get('name'))
+                crontab_content += f"# ID: {job_id} - {job_name}\n"
+                # Adiciona redirecionamento para logs de erro
+                crontab_content += f"{job['schedule']} {job['command']} 2>&1\n"
             
             # Escreve no crontab
             process = subprocess.Popen(
@@ -96,6 +202,8 @@ class CronManager:
                 logger.error(f"Erro ao atualizar crontab: {stderr.decode()}")
             else:
                 logger.info("Crontab atualizado com sucesso")
+                # Reinicia o cron para garantir que as mudanças sejam aplicadas
+                subprocess.run(['pkill', '-HUP', 'crond'], check=False)
                 
         except Exception as e:
             logger.error(f"Erro ao sincronizar crontab: {e}")
@@ -106,72 +214,104 @@ class CronManager:
         return self.jobs
     
     def get_job(self, job_id: int) -> Optional[Dict]:
-        """Obtém um job específico"""
+        """Obtém um agendamento específico"""
         for job in self.jobs:
-            if job['id'] == job_id:
+            if job.get('idAgendamento', job.get('id')) == job_id:
                 return job
         return None
     
-    def create_job(self, name: str, schedule: str, command: str) -> Dict:
-        """Cria um novo job"""
+    def create_job(self, nome_agendamento: str, url_agendamento: str, 
+                   dados_cron: Dict, payload_agendamento: str = None) -> Dict:
+        """Cria um novo agendamento"""
         # Validações
-        if not name or not name.strip():
-            raise ValueError("Nome é obrigatório")
+        if not nome_agendamento or not nome_agendamento.strip():
+            raise ValueError("Nome do agendamento é obrigatório")
         
+        if not url_agendamento or not url_agendamento.strip():
+            raise ValueError("URL do agendamento é obrigatória")
+        
+        if not dados_cron:
+            raise ValueError("Dados do cron são obrigatórios")
+        
+        # Gera próximo ID
+        next_id = max([job.get('idAgendamento', job.get('id', 0)) for job in self.jobs], default=0) + 1
+        
+        # Gera slug para log
+        slug = self._generate_url_slug(url_agendamento)
+        
+        # Monta expressão cron
+        schedule = self._build_cron_expression(dados_cron)
+        
+        # Monta comando curl
+        command = self._build_curl_command(url_agendamento, payload_agendamento, slug)
+        
+        # Valida expressão cron
         if not self._validate_cron_schedule(schedule):
-            raise ValueError("Expressão cron inválida")
+            raise ValueError(f"Expressão cron inválida: {schedule}")
         
-        if not command or not command.strip():
-            raise ValueError("Comando é obrigatório")
-        
-        # Gera ID
-        new_id = max([job['id'] for job in self.jobs], default=0) + 1
-        
-        # Cria job
-        job = {
-            'id': new_id,
-            'name': name.strip(),
-            'schedule': schedule.strip(),
-            'command': command.strip(),
+        # Cria novo job
+        new_job = {
+            'idAgendamento': next_id,
+            'nomeAgendamento': nome_agendamento.strip(),
+            'urlAgendamento': url_agendamento.strip(),
+            'payloadAgendamento': payload_agendamento,
+            'dadosCron': dados_cron,
+            'schedule': schedule,  # Gerado automaticamente
+            'command': command,    # Gerado automaticamente
+            'slug': slug,         # Para referência
             'created_at': datetime.now().isoformat(),
             'updated_at': datetime.now().isoformat()
         }
         
-        self.jobs.append(job)
+        self.jobs.append(new_job)
         self._save_jobs()
         
-        logger.info(f"Job criado: {job['name']} (ID: {job['id']})")
-        return job
+        logger.info(f"Agendamento criado: {nome_agendamento} (ID: {next_id})")
+        return new_job
     
-    def update_job(self, job_id: int, name: Optional[str] = None, 
-                   schedule: Optional[str] = None, 
-                   command: Optional[str] = None) -> Optional[Dict]:
-        """Atualiza um job existente"""
+    def update_job(self, job_id: int, nome_agendamento: str = None, 
+                   url_agendamento: str = None, dados_cron: Dict = None,
+                   payload_agendamento: str = None) -> Optional[Dict]:
+        """Atualiza um agendamento existente"""
         job = self.get_job(job_id)
-        
         if not job:
             return None
         
-        # Atualiza campos fornecidos
-        if name is not None:
-            if not name.strip():
-                raise ValueError("Nome não pode ser vazio")
-            job['name'] = name.strip()
+        # Atualiza campos se fornecidos
+        if nome_agendamento is not None:
+            if not nome_agendamento.strip():
+                raise ValueError("Nome do agendamento não pode ser vazio")
+            job['nomeAgendamento'] = nome_agendamento.strip()
         
-        if schedule is not None:
-            if not self._validate_cron_schedule(schedule):
-                raise ValueError("Expressão cron inválida")
-            job['schedule'] = schedule.strip()
+        if url_agendamento is not None:
+            if not url_agendamento.strip():
+                raise ValueError("URL do agendamento não pode ser vazia")
+            job['urlAgendamento'] = url_agendamento.strip()
+            job['slug'] = self._generate_url_slug(url_agendamento)
         
-        if command is not None:
-            if not command.strip():
-                raise ValueError("Comando não pode ser vazio")
-            job['command'] = command.strip()
+        if payload_agendamento is not None:
+            job['payloadAgendamento'] = payload_agendamento
+        
+        if dados_cron is not None:
+            job['dadosCron'] = dados_cron
+        
+        # Regenera schedule e command se necessário
+        if dados_cron is not None or url_agendamento is not None or payload_agendamento is not None:
+            job['schedule'] = self._build_cron_expression(job['dadosCron'])
+            job['command'] = self._build_curl_command(
+                job['urlAgendamento'], 
+                job.get('payloadAgendamento'), 
+                job['slug']
+            )
+            
+            # Valida nova expressão cron
+            if not self._validate_cron_schedule(job['schedule']):
+                raise ValueError(f"Expressão cron inválida: {job['schedule']}")
         
         job['updated_at'] = datetime.now().isoformat()
-        self._save_jobs()
         
-        logger.info(f"Job atualizado: {job['name']} (ID: {job['id']})")
+        self._save_jobs()
+        logger.info(f"Agendamento atualizado: {job['nomeAgendamento']} (ID: {job_id})")
         return job
     
     def delete_job(self, job_id: int) -> bool:

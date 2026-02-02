@@ -5,14 +5,22 @@ RUN apk add --no-cache \
     python3 \
     py3-pip \
     cronie \
+    tzdata \
+    curl \
     && rm -rf /var/cache/apk/*
+
+# Define timezone para América/São Paulo (UTC-3)
+ENV TZ=America/Sao_Paulo
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # Cria diretório de trabalho
 WORKDIR /app
 
-# Copia requirements e instala dependências Python
+# Cria ambiente virtual e instala dependências Python
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN python3 -m venv /opt/venv && \
+    . /opt/venv/bin/activate && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copia código da aplicação
 COPY app.py .
@@ -25,4 +33,4 @@ RUN mkdir -p /data /var/log
 EXPOSE 5000
 
 # Comando para iniciar a aplicação
-CMD ["python3", "app.py"]
+CMD ["/opt/venv/bin/python", "app.py"]
