@@ -22,12 +22,12 @@ class CronManager:
         self._ensure_cron_running()
         self._sync_to_crontab()
     
-    def _generate_url_slug(self, url: str) -> str:
-        """Gera slug da URL para nome do arquivo de log"""
-        # Remove protocolo e converte para minúsculo
-        clean_url = re.sub(r'^https?://', '', url.lower())
+    def _generate_slug(self, nome_agendamento: str) -> str:
+        """Gera slug do nome do agendamento para nome do arquivo de log"""
+        # Converte para minúsculo e remove acentos básicos
+        slug = nome_agendamento.lower()
         # Remove caracteres especiais e substitui por -
-        slug = re.sub(r'[^a-z0-9]+', '-', clean_url)
+        slug = re.sub(r'[^a-z0-9]+', '-', slug)
         # Remove - do início e fim
         slug = slug.strip('-')
         return slug
@@ -236,8 +236,8 @@ class CronManager:
         # Gera próximo ID
         next_id = max([job.get('idAgendamento', job.get('id', 0)) for job in self.jobs], default=0) + 1
         
-        # Gera slug para log
-        slug = self._generate_url_slug(url_agendamento)
+        # Gera slug para log baseado no nome
+        slug = self._generate_slug(nome_agendamento)
         
         # Monta expressão cron
         schedule = self._build_cron_expression(dados_cron)
@@ -282,12 +282,12 @@ class CronManager:
             if not nome_agendamento.strip():
                 raise ValueError("Nome do agendamento não pode ser vazio")
             job['nomeAgendamento'] = nome_agendamento.strip()
+            job['slug'] = self._generate_slug(nome_agendamento.strip())
         
         if url_agendamento is not None:
             if not url_agendamento.strip():
                 raise ValueError("URL do agendamento não pode ser vazia")
             job['urlAgendamento'] = url_agendamento.strip()
-            job['slug'] = self._generate_url_slug(url_agendamento)
         
         if payload_agendamento is not None:
             job['payloadAgendamento'] = payload_agendamento
@@ -296,7 +296,7 @@ class CronManager:
             job['dadosCron'] = dados_cron
         
         # Regenera schedule e command se necessário
-        if dados_cron is not None or url_agendamento is not None or payload_agendamento is not None:
+        if dados_cron is not None or url_agendamento is not None or payload_agendamento is not None or nome_agendamento is not None:
             job['schedule'] = self._build_cron_expression(job['dadosCron'])
             job['command'] = self._build_curl_command(
                 job['urlAgendamento'], 
