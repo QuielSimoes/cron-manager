@@ -317,7 +317,7 @@ class CronManager:
     def delete_job(self, job_id: int) -> bool:
         """Exclui um job"""
         initial_count = len(self.jobs)
-        self.jobs = [job for job in self.jobs if job['id'] != job_id]
+        self.jobs = [job for job in self.jobs if job.get('idAgendamento', job.get('id')) != job_id]
         
         if len(self.jobs) < initial_count:
             self._save_jobs()
